@@ -1,0 +1,23 @@
+{
+  "name": "collaborative-whiteboard-suite",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@10.0.0",
+  "scripts": {
+    "dev": "npm --workspace apps/web run dev",
+    "dev:collab": "npm --workspace apps/collab run dev",
+    "build": "npm --workspace apps/web run build",
+    "build:collab": "npm --workspace apps/collab run build",
+    "lint": "npm --workspace apps/web run lint",
+    "typecheck": "npm --workspace apps/web run typecheck && npm --workspace apps/collab run typecheck",
+    "test": "npm --workspace apps/web run test && npm --workspace apps/collab run test"
+  },
+  "workspaces": [
+    "apps/*"
+  ],
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "tsx": "^4.22.3",
+    "vitest": "^4.1.7"
+  }
+}

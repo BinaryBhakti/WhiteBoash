@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+dist
+.turbo
+.env
+.env.local
+.env.*.local
+.clerk
+**/.clerk
+coverage
+*.tsbuildinfo
+.DS_Store
