@@ -34,6 +34,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 NEXT_PUBLIC_YJS_WS_URL=ws://localhost:1234
 CLERK_WEBHOOK_SECRET=
 CLERK_JWKS_URL=
+NODE_ENV=development
 ```
 
 The collaboration server also reads the Supabase service role key and Clerk JWKS URL so it can authorize WebSocket room access.
