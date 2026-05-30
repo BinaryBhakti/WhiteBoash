@@ -1,13 +1,15 @@
 import { headers } from "next/headers";
 import type { WebhookEvent } from "@clerk/nextjs/server";
 import { Webhook } from "svix";
+import { getWebhookEnv } from "@/lib/env/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
-  const secret = process.env.CLERK_WEBHOOK_SECRET;
-
-  if (!secret) {
-    return Response.json({ error: "Missing CLERK_WEBHOOK_SECRET." }, { status: 500 });
+  let secret: string;
+  try {
+    secret = getWebhookEnv().CLERK_WEBHOOK_SECRET;
+  } catch {
+    return Response.json({ error: "Clerk webhook is not configured." }, { status: 500 });
   }
 
   const payload = await request.text();

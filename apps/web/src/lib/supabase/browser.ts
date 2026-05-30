@@ -1,12 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
+import { getBrowserSupabaseEnv } from "@/lib/env/public";
 
 export function createSupabaseBrowserClient(accessToken?: string | null) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !anonKey) {
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.");
-  }
+  const { NEXT_PUBLIC_SUPABASE_URL: url, NEXT_PUBLIC_SUPABASE_ANON_KEY: anonKey } = getBrowserSupabaseEnv();
 
   return createClient(url, anonKey, {
     global: accessToken

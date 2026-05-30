@@ -1,16 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
+import { getSupabaseAdminEnv, hasSupabaseAdminEnv } from "@/lib/env/server";
 
-export function hasSupabaseAdminEnv() {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
+export { hasSupabaseAdminEnv };
 
 export function createSupabaseAdminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !serviceRoleKey) {
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
-  }
+  const { NEXT_PUBLIC_SUPABASE_URL: url, SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey } = getSupabaseAdminEnv();
 
   return createClient(url, serviceRoleKey, {
     auth: {

@@ -1,6 +1,8 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { assertClerkServerEnv } from "@/lib/env/server";
 
 export async function requireCurrentUser() {
+  assertClerkServerEnv();
   await auth.protect();
 
   const user = await currentUser();

@@ -2,6 +2,7 @@
 
 import * as Y from "yjs";
 import { HocuspocusProvider } from "@hocuspocus/provider";
+import { getYjsWebSocketUrl } from "@/lib/env/public";
 
 export type YRoom = {
   doc: Y.Doc;
@@ -10,7 +11,7 @@ export type YRoom = {
 };
 
 export function createYRoom(roomName: string, token?: string | null): YRoom {
-  const endpoint = process.env.NEXT_PUBLIC_YJS_WS_URL ?? "ws://localhost:1234";
+  const endpoint = getYjsWebSocketUrl();
   const doc = new Y.Doc();
   const provider = new HocuspocusProvider({
     url: endpoint,
