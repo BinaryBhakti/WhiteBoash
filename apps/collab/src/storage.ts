@@ -1,4 +1,5 @@
 import * as Y from "yjs";
+import { errorDetails, log } from "./logger.js";
 import { supabase } from "./supabase.js";
 
 export type WorkspaceRole = "owner" | "admin" | "editor" | "viewer";
@@ -84,6 +85,10 @@ export async function storeYDocument(documentId: string, ydoc: Y.Doc) {
     .eq("id", documentId);
 
   if (error) {
+    log("error", "document.persistence_failed", {
+      documentId,
+      ...errorDetails(error),
+    });
     throw new Error(`Failed to store Yjs state: ${error.message}`);
   }
 }
@@ -95,6 +100,10 @@ export async function createSnapshot(documentId: string, ydoc: Y.Doc, userId?: s
     .eq("document_id", documentId);
 
   if (countError) {
+    log("error", "snapshot.count_failed", {
+      documentId,
+      ...errorDetails(countError),
+    });
     throw new Error(`Failed to count snapshots: ${countError.message}`);
   }
 
@@ -106,8 +115,17 @@ export async function createSnapshot(documentId: string, ydoc: Y.Doc, userId?: s
   });
 
   if (error) {
+    log("error", "snapshot.creation_failed", {
+      documentId,
+      ...errorDetails(error),
+    });
     throw new Error(`Failed to create snapshot: ${error.message}`);
   }
+
+  log("info", "snapshot.created", {
+    documentId,
+    version: (count ?? 0) + 1,
+  });
 }
 
 function decodeBytea(value: unknown): Uint8Array | null {
