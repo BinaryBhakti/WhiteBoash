@@ -5,8 +5,9 @@ import { useCanvasStore } from "@/hooks/use-canvas-store";
 
 export function LayersPanel({ shapes }: { shapes: CanvasShape[] }) {
   const isOpen = useCanvasStore((state) => state.isLayersOpen);
-  const selectedShapeId = useCanvasStore((state) => state.selectedShapeId);
-  const setSelectedShapeId = useCanvasStore((state) => state.setSelectedShapeId);
+  const selectedShapeIds = useCanvasStore((state) => state.selectedShapeIds);
+  const setSelectedShapeIds = useCanvasStore((state) => state.setSelectedShapeIds);
+  const toggleSelectedShapeId = useCanvasStore((state) => state.toggleSelectedShapeId);
 
   if (!isOpen) {
     return null;
@@ -29,10 +30,17 @@ export function LayersPanel({ shapes }: { shapes: CanvasShape[] }) {
               <button
                 key={shape.id}
                 className={`flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm ${
-                  selectedShapeId === shape.id ? "bg-emerald-50 text-emerald-800" : "text-slate-700 hover:bg-slate-50"
+                  selectedShapeIds.includes(shape.id) ? "bg-emerald-50 text-emerald-800" : "text-slate-700 hover:bg-slate-50"
                 }`}
                 type="button"
-                onClick={() => setSelectedShapeId(shape.id)}
+                onClick={(event) => {
+                  if (event.shiftKey) {
+                    toggleSelectedShapeId(shape.id);
+                    return;
+                  }
+
+                  setSelectedShapeIds([shape.id]);
+                }}
               >
                 <span className="capitalize">{shape.kind}</span>
                 <span className="font-mono text-xs text-slate-400">{shape.id.slice(0, 6)}</span>

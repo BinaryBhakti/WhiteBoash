@@ -5,11 +5,13 @@ import type { CanvasTool, Viewport } from "@/lib/types";
 
 type CanvasState = {
   tool: CanvasTool;
-  selectedShapeId: string | null;
+  selectedShapeIds: string[];
   viewport: Viewport;
   isLayersOpen: boolean;
   setTool: (tool: CanvasTool) => void;
-  setSelectedShapeId: (id: string | null) => void;
+  setSelectedShapeIds: (ids: string[]) => void;
+  toggleSelectedShapeId: (id: string) => void;
+  clearSelection: () => void;
   setViewport: (viewport: Viewport) => void;
   patchViewport: (patch: Partial<Viewport>) => void;
   toggleLayers: () => void;
@@ -17,11 +19,18 @@ type CanvasState = {
 
 export const useCanvasStore = create<CanvasState>((set) => ({
   tool: "select",
-  selectedShapeId: null,
+  selectedShapeIds: [],
   viewport: { x: 0, y: 0, zoom: 1 },
   isLayersOpen: true,
   setTool: (tool) => set({ tool }),
-  setSelectedShapeId: (selectedShapeId) => set({ selectedShapeId }),
+  setSelectedShapeIds: (selectedShapeIds) => set({ selectedShapeIds: Array.from(new Set(selectedShapeIds)) }),
+  toggleSelectedShapeId: (id) =>
+    set((state) => ({
+      selectedShapeIds: state.selectedShapeIds.includes(id)
+        ? state.selectedShapeIds.filter((selectedId) => selectedId !== id)
+        : [...state.selectedShapeIds, id],
+    })),
+  clearSelection: () => set({ selectedShapeIds: [] }),
   setViewport: (viewport) => set({ viewport }),
   patchViewport: (patch) =>
     set((state) => ({

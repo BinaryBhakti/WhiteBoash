@@ -15,14 +15,14 @@ const tools: Array<{ id: CanvasTool; label: string; icon: React.ComponentType<{ 
   { id: "text", label: "Text", icon: Type },
 ];
 
-export function CanvasToolbar() {
+export function CanvasToolbar({ readOnly = false }: { readOnly?: boolean }) {
   const tool = useCanvasStore((state) => state.tool);
   const setTool = useCanvasStore((state) => state.setTool);
   const toggleLayers = useCanvasStore((state) => state.toggleLayers);
 
   return (
     <div className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-1 rounded-md border bg-white/95 p-1 shadow-sm backdrop-blur">
-      {tools.map((item) => {
+      {tools.filter((item) => !readOnly || item.id === "select" || item.id === "pan").map((item) => {
         const Icon = item.icon;
         return (
           <button

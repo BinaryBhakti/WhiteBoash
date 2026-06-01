@@ -1,5 +1,5 @@
 import type { CanvasShape, Point, Viewport } from "@/lib/types";
-import { getShapeBounds } from "@/components/canvas/shape-utils";
+import { getCombinedBounds, getResizeHandles, type ShapeBounds } from "@/components/canvas/shape-utils";
 
 export function screenToWorld(point: Point, viewport: Viewport): Point {
   return {
@@ -13,14 +13,17 @@ export function drawCanvasScene(
   shapes: CanvasShape[],
   viewport: Viewport,
   draftShape?: CanvasShape | null,
-  selectedShapeId?: string | null,
+  selectedShapeIds: string[] = [],
+  marqueeBounds?: ShapeBounds | null,
 ) {
   const canvas = context.canvas;
+  const pixelRatio = canvas.width / Math.max(1, canvas.clientWidth);
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.clearRect(0, 0, canvas.width, canvas.height);
-  drawGrid(context, viewport);
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  drawGrid(context, viewport, pixelRatio);
 
-  context.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.x, viewport.y);
+  context.setTransform(viewport.zoom * pixelRatio, 0, 0, viewport.zoom * pixelRatio, viewport.x * pixelRatio, viewport.y * pixelRatio);
   for (const shape of shapes) {
     drawShape(context, shape);
   }
@@ -29,22 +32,24 @@ export function drawCanvasScene(
     drawShape(context, draftShape);
   }
 
-  if (selectedShapeId) {
-    const selected = shapes.find((shape) => shape.id === selectedShapeId);
-    if (selected) {
-      drawSelection(context, selected);
-    }
+  const selectedShapes = shapes.filter((shape) => selectedShapeIds.includes(shape.id));
+  if (selectedShapes.length > 0) {
+    drawSelection(context, selectedShapes, viewport.zoom);
+  }
+
+  if (marqueeBounds) {
+    drawMarquee(context, marqueeBounds, viewport.zoom);
   }
 }
 
-function drawGrid(context: CanvasRenderingContext2D, viewport: Viewport) {
+function drawGrid(context: CanvasRenderingContext2D, viewport: Viewport, pixelRatio: number) {
   const size = 32 * viewport.zoom;
   if (size < 8) {
     return;
   }
 
-  const width = context.canvas.width;
-  const height = context.canvas.height;
+  const width = context.canvas.width / pixelRatio;
+  const height = context.canvas.height / pixelRatio;
   const offsetX = viewport.x % size;
   const offsetY = viewport.y % size;
 
@@ -161,13 +166,39 @@ function wrapText(
   context.fillText(line, x, lineY);
 }
 
-function drawSelection(context: CanvasRenderingContext2D, shape: CanvasShape) {
-  const bounds = getShapeBounds(shape);
+function drawSelection(context: CanvasRenderingContext2D, shapes: CanvasShape[], zoom: number) {
+  const bounds = getCombinedBounds(shapes);
+  if (!bounds) {
+    return;
+  }
 
   context.save();
   context.strokeStyle = "#0f766e";
-  context.lineWidth = 1;
-  context.setLineDash([6, 5]);
-  context.strokeRect(bounds.x - 6, bounds.y - 6, bounds.width + 12, bounds.height + 12);
+  context.lineWidth = 1 / zoom;
+  context.setLineDash([6 / zoom, 5 / zoom]);
+  context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+  context.setLineDash([]);
+
+  for (const { point } of getResizeHandles(shapes)) {
+    context.beginPath();
+    context.fillStyle = "#ffffff";
+    context.strokeStyle = "#0f766e";
+    context.lineWidth = 1.5 / zoom;
+    context.rect(point.x - 4 / zoom, point.y - 4 / zoom, 8 / zoom, 8 / zoom);
+    context.fill();
+    context.stroke();
+  }
+
+  context.restore();
+}
+
+function drawMarquee(context: CanvasRenderingContext2D, bounds: ShapeBounds, zoom: number) {
+  context.save();
+  context.fillStyle = "rgba(13, 148, 136, 0.08)";
+  context.strokeStyle = "#0f766e";
+  context.lineWidth = 1 / zoom;
+  context.setLineDash([5 / zoom, 4 / zoom]);
+  context.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+  context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
   context.restore();
 }
