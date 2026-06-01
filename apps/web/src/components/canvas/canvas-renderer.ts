@@ -148,22 +148,26 @@ function wrapText(
   maxWidth: number,
   lineHeight: number,
 ) {
-  const words = text.split(" ");
-  let line = "";
   let lineY = y;
 
-  for (const word of words) {
-    const testLine = line ? `${line} ${word}` : word;
-    if (context.measureText(testLine).width > maxWidth && line) {
-      context.fillText(line, x, lineY);
-      line = word;
-      lineY += lineHeight;
-    } else {
-      line = testLine;
-    }
-  }
+  for (const paragraph of text.split("\n")) {
+    const words = paragraph.split(" ");
+    let line = "";
 
-  context.fillText(line, x, lineY);
+    for (const word of words) {
+      const testLine = line ? `${line} ${word}` : word;
+      if (context.measureText(testLine).width > maxWidth && line) {
+        context.fillText(line, x, lineY);
+        line = word;
+        lineY += lineHeight;
+      } else {
+        line = testLine;
+      }
+    }
+
+    context.fillText(line, x, lineY);
+    lineY += lineHeight;
+  }
 }
 
 function drawSelection(context: CanvasRenderingContext2D, shapes: CanvasShape[], zoom: number) {

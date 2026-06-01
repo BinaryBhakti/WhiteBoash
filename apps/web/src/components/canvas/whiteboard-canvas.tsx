@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
-import type { AwarenessCursor, CanvasShape, CanvasTool, Point, Viewport } from "@/lib/types";
+import type { AwarenessCursor, CanvasShape, CanvasTool, Point, TextShape, Viewport } from "@/lib/types";
 import { useCanvasStore } from "@/hooks/use-canvas-store";
 import { useCRDTMap } from "@/hooks/use-crdt-map";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
@@ -19,6 +19,7 @@ import {
   moveShape,
   resizeBounds,
   resizeShape,
+  simplifyFreehandShape,
   type ResizeHandle,
   type ShapeBounds,
 } from "@/components/canvas/shape-utils";
@@ -41,6 +42,11 @@ type PointerSession = {
   appendSelection?: boolean;
 };
 
+type TextEditorState = {
+  shape: TextShape;
+  isNew: boolean;
+};
+
 export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorChange }: WhiteboardCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const draftShapeRef = useRef<CanvasShape | null>(null);
@@ -49,10 +55,16 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
   const animationFrameRef = useRef<number | null>(null);
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, zoom: 1 });
   const undoManagerRef = useRef<Y.UndoManager | null>(null);
+  const clipboardRef = useRef<CanvasShape[]>([]);
+  const pasteCountRef = useRef(0);
+  const lastPointerWorldRef = useRef<Point | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  const textCancelRef = useRef(false);
 
   const tool = useCanvasStore((state) => state.tool);
   const viewport = useCanvasStore((state) => state.viewport);
   const setViewport = useCanvasStore((state) => state.setViewport);
+  const setTool = useCanvasStore((state) => state.setTool);
   const selectedShapeIds = useCanvasStore((state) => state.selectedShapeIds);
   const setSelectedShapeIds = useCanvasStore((state) => state.setSelectedShapeIds);
   const toggleSelectedShapeId = useCanvasStore((state) => state.toggleSelectedShapeId);
@@ -61,6 +73,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const [activeMode, setActiveMode] = useState<PointerSession["mode"] | null>(null);
   const [hoveredHandle, setHoveredHandle] = useState<ResizeHandle | null>(null);
+  const [textEditor, setTextEditor] = useState<TextEditorState | null>(null);
 
   viewportRef.current = viewport;
 
@@ -72,6 +85,15 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
   useEffect(() => {
     setHoveredHandle(null);
   }, [tool]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      textAreaRef.current?.focus();
+      textAreaRef.current?.select();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [textEditor?.shape.id]);
 
   const sortedShapes = useMemo(
     () => shapes.slice().sort((left, right) => left.updatedAt - right.updatedAt),
@@ -103,8 +125,66 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     };
   }, [doc]);
 
+  const copySelectedShapes = useCallback(() => {
+    clipboardRef.current = selectedShapes.map((shape) => structuredClone(shape));
+    pasteCountRef.current = 0;
+  }, [selectedShapes]);
+
+  const pasteClipboardShapes = useCallback(() => {
+    if (!shapeMap || clipboardRef.current.length === 0) {
+      return;
+    }
+
+    pasteCountRef.current += 1;
+    const bounds = getCombinedBounds(clipboardRef.current);
+    const anchor = lastPointerWorldRef.current;
+    const cascadeOffset = 24 * pasteCountRef.current;
+    const delta = anchor && bounds
+      ? { x: anchor.x - bounds.x + cascadeOffset, y: anchor.y - bounds.y + cascadeOffset }
+      : { x: cascadeOffset, y: cascadeOffset };
+    const pastedIds = clipboardRef.current.map((shape) => {
+      const pasted = moveShape({ ...shape, id: crypto.randomUUID() }, delta);
+      shapeMap.set(pasted.id, pasted);
+      return pasted.id;
+    });
+    setSelectedShapeIds(pastedIds);
+  }, [setSelectedShapeIds, shapeMap]);
+
+  const cancelTextEditing = useCallback(() => {
+    textCancelRef.current = true;
+    setTextEditor(null);
+  }, []);
+
+  const commitTextEditing = useCallback(() => {
+    if (textCancelRef.current) {
+      textCancelRef.current = false;
+      return;
+    }
+
+    if (!shapeMap || !textEditor) {
+      return;
+    }
+
+    const text = textEditor.shape.text.trim();
+    if (text) {
+      shapeMap.set(textEditor.shape.id, {
+        ...textEditor.shape,
+        text,
+        updatedAt: Date.now(),
+      });
+      setSelectedShapeIds([textEditor.shape.id]);
+    }
+
+    setTextEditor(null);
+  }, [setSelectedShapeIds, shapeMap, textEditor]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, [contenteditable='true']")) {
+        return;
+      }
+
       if (event.key === "Escape") {
         clearSelection();
         marqueeBoundsRef.current = null;
@@ -130,16 +210,33 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
           return duplicate.id;
         });
         setSelectedShapeIds(duplicateIds);
+      } else if (isMod && event.key.toLowerCase() === "c" && selectedShapes.length > 0) {
+        event.preventDefault();
+        copySelectedShapes();
+      } else if (isMod && event.key.toLowerCase() === "x" && selectedShapes.length > 0) {
+        event.preventDefault();
+        copySelectedShapes();
+        selectedShapeIds.forEach((id) => shapeMap.delete(id));
+        clearSelection();
+      } else if (isMod && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        pasteClipboardShapes();
       } else if ((event.key === "Delete" || event.key === "Backspace") && selectedShapeIds.length > 0) {
         event.preventDefault();
         selectedShapeIds.forEach((id) => shapeMap.delete(id));
         clearSelection();
+      } else if (!isMod && !event.altKey) {
+        const shortcutTool = getToolForShortcut(event.key);
+        if (shortcutTool && (!readOnly || shortcutTool === "select" || shortcutTool === "pan")) {
+          event.preventDefault();
+          setTool(shortcutTool);
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clearSelection, readOnly, selectedShapeIds, selectedShapes, setSelectedShapeIds, shapeMap]);
+  }, [clearSelection, copySelectedShapes, pasteClipboardShapes, readOnly, selectedShapeIds, selectedShapes, setSelectedShapeIds, setTool, shapeMap]);
 
   const requestRender = useCallback(() => {
     if (animationFrameRef.current !== null) {
@@ -206,11 +303,17 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     }
 
     if (shapeTool === "text") {
-      return { ...base, kind: "text", fill: "#0f172a", text: "Note", width: 180 };
+      return { ...base, kind: "text", fill: "#0f172a", text: "", width: 180 };
     }
 
     return null;
   }, []);
+
+  const beginTextEditing = useCallback((shape: TextShape, isNew = false) => {
+    textCancelRef.current = false;
+    setSelectedShapeIds([shape.id]);
+    setTextEditor({ shape, isNew });
+  }, [setSelectedShapeIds]);
 
   const updateDraftShape = useCallback((draft: CanvasShape, start: Point, current: Point): CanvasShape => {
     if (draft.kind === "rectangle") {
@@ -241,12 +344,13 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    event.currentTarget.setPointerCapture(event.pointerId);
     const screenPoint = getScreenPoint(event);
     const worldPoint = screenToWorld(screenPoint, viewportRef.current);
+    lastPointerWorldRef.current = worldPoint;
     setHoveredHandle(null);
 
     if (tool === "pan" || event.button === 1) {
+      event.currentTarget.setPointerCapture(event.pointerId);
       setActiveMode("pan");
       pointerSessionRef.current = {
         pointerId: event.pointerId,
@@ -262,6 +366,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
       const selectionBounds = getCombinedBounds(selectedShapes);
 
       if (resizeHandle && selectionBounds) {
+        event.currentTarget.setPointerCapture(event.pointerId);
         setActiveMode("resize");
         pointerSessionRef.current = {
           pointerId: event.pointerId,
@@ -277,6 +382,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
 
       const selected = findShapeAtPoint(sortedShapes, worldPoint);
       if (selected) {
+        event.currentTarget.setPointerCapture(event.pointerId);
         const nextIds = event.shiftKey
           ? selectedShapeIds.includes(selected.id)
             ? selectedShapeIds.filter((id) => id !== selected.id)
@@ -308,6 +414,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
       }
 
       marqueeBoundsRef.current = boundsFromPoints(worldPoint, worldPoint);
+      event.currentTarget.setPointerCapture(event.pointerId);
       setActiveMode("marquee");
       pointerSessionRef.current = {
         pointerId: event.pointerId,
@@ -325,6 +432,12 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     }
 
     const draft = createDraftShape(tool, worldPoint);
+    if (draft?.kind === "text") {
+      beginTextEditing(draft, true);
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
     setActiveMode("draw");
     pointerSessionRef.current = {
       pointerId: event.pointerId,
@@ -334,18 +447,13 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     };
     draftShapeRef.current = draft;
 
-    if (draft?.kind === "text" && shapeMap) {
-      shapeMap.set(draft.id, draft);
-      setSelectedShapeIds([draft.id]);
-      draftShapeRef.current = null;
-    }
-
     requestRender();
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const screenPoint = getScreenPoint(event);
     const worldPoint = screenToWorld(screenPoint, viewportRef.current);
+    lastPointerWorldRef.current = worldPoint;
     onCursorChange?.({ ...worldPoint, documentId });
 
     const session = pointerSessionRef.current;
@@ -411,13 +519,16 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     const draft = draftShapeRef.current;
     const session = pointerSessionRef.current;
 
     if (!readOnly && draft && shapeMap && isMeaningfulShape(draft)) {
-      shapeMap.set(draft.id, draft);
-      setSelectedShapeIds([draft.id]);
+      const persistentShape = simplifyFreehandShape(draft);
+      shapeMap.set(persistentShape.id, persistentShape);
+      setSelectedShapeIds([persistentShape.id]);
     }
 
     if (session?.mode === "marquee" && marqueeBoundsRef.current) {
@@ -438,6 +549,18 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
 
   const handlePointerLeave = () => {
     onCursorChange?.(null);
+  };
+
+  const handleDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (readOnly) {
+      return;
+    }
+
+    const screenPoint = getScreenPoint(event);
+    const shape = findShapeAtPoint(sortedShapes, screenToWorld(screenPoint, viewportRef.current));
+    if (shape?.kind === "text") {
+      beginTextEditing(shape);
+    }
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
@@ -463,6 +586,48 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
       <div className="absolute bottom-4 left-4 z-20 rounded-md border bg-white/95 px-3 py-2 text-xs text-slate-600 shadow-sm">
         {readOnly ? "Read only | " : ""}{Math.round(viewport.zoom * 100)}% | {canvasSize.width.toFixed(0)}x{canvasSize.height.toFixed(0)}
       </div>
+      {textEditor ? (
+        <textarea
+          ref={textAreaRef}
+          aria-label={textEditor.isNew ? "New text note" : "Edit text note"}
+          className="absolute z-30 resize-none rounded-sm border border-emerald-600 bg-white/95 px-1 py-0.5 text-slate-900 shadow-sm outline-none ring-2 ring-emerald-200"
+          style={{
+            left: viewport.x + textEditor.shape.x * viewport.zoom,
+            top: viewport.y + (textEditor.shape.y - 20) * viewport.zoom,
+            width: Math.max(120, textEditor.shape.width * viewport.zoom),
+            minHeight: Math.max(56, 72 * viewport.zoom),
+            fontSize: Math.max(12, 16 * viewport.zoom),
+            lineHeight: `${Math.max(18, 22 * viewport.zoom)}px`,
+          }}
+          value={textEditor.shape.text}
+          onBlur={commitTextEditing}
+          onChange={(event) =>
+            setTextEditor((current) =>
+              current
+                ? {
+                    ...current,
+                    shape: {
+                      ...current.shape,
+                      text: event.target.value,
+                    },
+                  }
+                : null,
+            )
+          }
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              cancelTextEditing();
+              return;
+            }
+
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              commitTextEditing();
+            }
+          }}
+        />
+      ) : null}
       <canvas
         ref={canvasRef}
         className={`h-full w-full ${getCanvasCursor(tool, activeMode, hoveredHandle)}`}
@@ -471,10 +636,25 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onPointerLeave={handlePointerLeave}
+        onDoubleClick={handleDoubleClick}
         onWheel={handleWheel}
       />
     </div>
   );
+}
+
+function getToolForShortcut(key: string): CanvasTool | null {
+  const shortcuts: Record<string, CanvasTool> = {
+    v: "select",
+    h: "pan",
+    r: "rectangle",
+    o: "circle",
+    a: "arrow",
+    p: "freehand",
+    t: "text",
+  };
+
+  return shortcuts[key.toLowerCase()] ?? null;
 }
 
 function getCanvasCursor(tool: CanvasTool, activeMode: PointerSession["mode"] | null, hoveredHandle: ResizeHandle | null) {

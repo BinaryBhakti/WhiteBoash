@@ -9,6 +9,7 @@ import {
   moveShape,
   resizeBounds,
   resizeShape,
+  simplifyPoints,
 } from "@/components/canvas/shape-utils";
 import type { CanvasShape } from "@/lib/types";
 
@@ -145,5 +146,20 @@ describe("shape utils", () => {
   it("filters accidental tiny shapes", () => {
     expect(isMeaningfulShape({ ...rectangle, width: 2, height: 2 })).toBe(false);
     expect(isMeaningfulShape(rectangle)).toBe(true);
+  });
+
+  it("simplifies freehand points while preserving meaningful corners", () => {
+    expect(
+      simplifyPoints([
+        { x: 0, y: 0 },
+        { x: 25, y: 0.4 },
+        { x: 50, y: 0 },
+        { x: 50, y: 30 },
+      ]),
+    ).toEqual([
+      { x: 0, y: 0 },
+      { x: 50, y: 0 },
+      { x: 50, y: 30 },
+    ]);
   });
 });

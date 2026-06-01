@@ -281,6 +281,44 @@ export function duplicateShape(shape: CanvasShape): CanvasShape {
   return moveShape({ ...shape, id: crypto.randomUUID() }, { x: 24, y: 24 });
 }
 
+export function simplifyFreehandShape(shape: CanvasShape, tolerance = 1.5): CanvasShape {
+  if (shape.kind !== "freehand" || shape.points.length <= 2) {
+    return shape;
+  }
+
+  return {
+    ...shape,
+    points: simplifyPoints(shape.points, tolerance),
+  };
+}
+
+export function simplifyPoints(points: Point[], tolerance = 1.5): Point[] {
+  if (points.length <= 2) {
+    return points;
+  }
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  let furthestIndex = 0;
+  let furthestDistance = 0;
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const pointDistance = distanceToSegment(points[index], first, last);
+    if (pointDistance > furthestDistance) {
+      furthestDistance = pointDistance;
+      furthestIndex = index;
+    }
+  }
+
+  if (furthestDistance <= tolerance) {
+    return [first, last];
+  }
+
+  const left = simplifyPoints(points.slice(0, furthestIndex + 1), tolerance);
+  const right = simplifyPoints(points.slice(furthestIndex), tolerance);
+  return [...left.slice(0, -1), ...right];
+}
+
 function getPointsBounds(points: Point[]): ShapeBounds {
   if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
   const xs = points.map((point) => point.x);
