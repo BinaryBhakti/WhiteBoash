@@ -9,7 +9,9 @@ import {
   moveShape,
   resizeBounds,
   resizeShape,
+  reorderShapes,
   simplifyPoints,
+  sortShapesByLayer,
 } from "@/components/canvas/shape-utils";
 import type { CanvasShape } from "@/lib/types";
 
@@ -184,5 +186,22 @@ describe("shape utils", () => {
       width: 360,
       height: 280,
     });
+  });
+
+  it("keeps explicit layer ordering stable and reorders selections", () => {
+    const middle = { ...rectangle, id: "rect-2", zIndex: 2 };
+    const front = { ...rectangle, id: "rect-3", zIndex: 3 };
+    const back = { ...rectangle, id: "rect-1", zIndex: 1 };
+
+    expect(sortShapesByLayer([front, back, middle]).map((shape) => shape.id)).toEqual(["rect-1", "rect-2", "rect-3"]);
+    expect(reorderShapes([back, middle, front], ["rect-1"], "front").map((shape) => shape.id)).toEqual(["rect-2", "rect-3", "rect-1"]);
+    expect(reorderShapes([back, middle, front], ["rect-3"], "back").map((shape) => shape.id)).toEqual(["rect-3", "rect-1", "rect-2"]);
+  });
+
+  it("excludes hidden shapes from hit testing and marquee selection", () => {
+    const hidden = { ...rectangle, hidden: true };
+
+    expect(hitTestShape(hidden, { x: 20, y: 30 })).toBe(false);
+    expect(findShapesInBounds([hidden], { x: 0, y: 0, width: 200, height: 200 })).toEqual([]);
   });
 });

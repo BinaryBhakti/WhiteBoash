@@ -25,6 +25,10 @@ export function drawCanvasScene(
 
   context.setTransform(viewport.zoom * pixelRatio, 0, 0, viewport.zoom * pixelRatio, viewport.x * pixelRatio, viewport.y * pixelRatio);
   for (const shape of shapes) {
+    if (shape.hidden) {
+      continue;
+    }
+
     drawShape(context, shape);
   }
 
@@ -32,7 +36,7 @@ export function drawCanvasScene(
     drawShape(context, draftShape);
   }
 
-  const selectedShapes = shapes.filter((shape) => selectedShapeIds.includes(shape.id));
+  const selectedShapes = shapes.filter((shape) => !shape.hidden && selectedShapeIds.includes(shape.id));
   if (selectedShapes.length > 0) {
     drawSelection(context, selectedShapes, viewport.zoom);
   }

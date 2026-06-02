@@ -7,6 +7,7 @@ import { useCanvasStore } from "@/hooks/use-canvas-store";
 import { useCRDTMap } from "@/hooks/use-crdt-map";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { CanvasStyleToolbar } from "@/components/canvas/canvas-style-toolbar";
+import { CanvasObjectToolbar } from "@/components/canvas/canvas-object-toolbar";
 import { drawCanvasScene, screenToWorld } from "@/components/canvas/canvas-renderer";
 import { LayersPanel } from "@/components/canvas/layers-panel";
 import {
@@ -16,11 +17,15 @@ import {
   findShapeAtPoint,
   findShapesInBounds,
   getCombinedBounds,
+  getShapeZIndex,
   isMeaningfulShape,
   moveShape,
   resizeBounds,
   resizeShape,
+  reorderShapes,
   simplifyFreehandShape,
+  sortShapesByLayer,
+  type LayerOrderCommand,
   type ResizeHandle,
   type ShapeBounds,
 } from "@/components/canvas/shape-utils";
@@ -101,7 +106,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
   }, [textEditor?.shape.id]);
 
   const sortedShapes = useMemo(
-    () => shapes.slice().sort((left, right) => left.updatedAt - right.updatedAt),
+    () => sortShapesByLayer(shapes),
     [shapes],
   );
   const selectedShapes = useMemo(
@@ -142,7 +147,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
   }, [doc]);
 
   const copySelectedShapes = useCallback(() => {
-    clipboardRef.current = selectedShapes.map((shape) => structuredClone(shape));
+    clipboardRef.current = selectedShapes.filter((shape) => !shape.locked).map((shape) => structuredClone(shape));
     pasteCountRef.current = 0;
   }, [selectedShapes]);
 
@@ -158,13 +163,36 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     const delta = anchor && bounds
       ? { x: anchor.x - bounds.x + cascadeOffset, y: anchor.y - bounds.y + cascadeOffset }
       : { x: cascadeOffset, y: cascadeOffset };
-    const pastedIds = clipboardRef.current.map((shape) => {
-      const pasted = moveShape({ ...shape, id: crypto.randomUUID() }, delta);
+    const highestZIndex = Math.max(0, ...sortedShapes.map(getShapeZIndex));
+    const pastedIds = clipboardRef.current.map((shape, index) => {
+      const pasted = moveShape({ ...shape, id: crypto.randomUUID(), zIndex: highestZIndex + index + 1 }, delta);
       shapeMap.set(pasted.id, pasted);
       return pasted.id;
     });
     setSelectedShapeIds(pastedIds);
-  }, [setSelectedShapeIds, shapeMap]);
+  }, [setSelectedShapeIds, shapeMap, sortedShapes]);
+
+  const duplicateSelectedShapes = useCallback(() => {
+    if (!shapeMap) {
+      return;
+    }
+
+    const duplicateIds = selectedShapes.filter((shape) => !shape.locked).map((selected) => {
+      const duplicate = duplicateShape(selected);
+      shapeMap.set(duplicate.id, duplicate);
+      return duplicate.id;
+    });
+    setSelectedShapeIds(duplicateIds);
+  }, [selectedShapes, setSelectedShapeIds, shapeMap]);
+
+  const deleteSelectedShapes = useCallback(() => {
+    if (!shapeMap) {
+      return;
+    }
+
+    selectedShapes.filter((shape) => !shape.locked).forEach((shape) => shapeMap.delete(shape.id));
+    clearSelection();
+  }, [clearSelection, selectedShapes, shapeMap]);
 
   const cancelTextEditing = useCallback(() => {
     textCancelRef.current = true;
@@ -201,15 +229,39 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     }
 
     doc.transact(() => {
-      selectedShapes.forEach((shape) => {
+      selectedShapes.filter((shape) => !shape.locked).forEach((shape) => {
         shapeMap.set(shape.id, {
           ...shape,
           ...patch,
+          zIndex: getShapeZIndex(shape),
           updatedAt: Date.now(),
         });
       });
     });
   }, [doc, patchStyleDefaults, selectedShapes, shapeMap]);
+
+  const patchShape = useCallback((shapeId: string, patch: Partial<CanvasShape>) => {
+    if (!shapeMap) {
+      return;
+    }
+
+    const shape = shapeMap.get(shapeId);
+    if (!shape) {
+      return;
+    }
+
+    shapeMap.set(shapeId, { ...shape, ...patch, zIndex: getShapeZIndex(shape), updatedAt: Date.now() } as CanvasShape);
+  }, [shapeMap]);
+
+  const reorderSelectedShapes = useCallback((command: LayerOrderCommand) => {
+    if (!shapeMap || selectedShapeIds.length === 0) {
+      return;
+    }
+
+    doc.transact(() => {
+      reorderShapes(sortedShapes, selectedShapeIds, command).forEach((shape) => shapeMap.set(shape.id, shape));
+    });
+  }, [doc, selectedShapeIds, shapeMap, sortedShapes]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -235,29 +287,35 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
       } else if (isMod && event.key.toLowerCase() === "z") {
         event.preventDefault();
         undoManagerRef.current?.undo();
-      } else if (isMod && event.key.toLowerCase() === "d" && selectedShapes.length > 0) {
+      } else if (isMod && event.key.toLowerCase() === "]" && event.shiftKey) {
         event.preventDefault();
-        const duplicateIds = selectedShapes.map((selected) => {
-          const duplicate = duplicateShape(selected);
-          shapeMap.set(duplicate.id, duplicate);
-          return duplicate.id;
-        });
-        setSelectedShapeIds(duplicateIds);
-      } else if (isMod && event.key.toLowerCase() === "c" && selectedShapes.length > 0) {
+        reorderSelectedShapes("front");
+      } else if (isMod && event.key.toLowerCase() === "[" && event.shiftKey) {
+        event.preventDefault();
+        reorderSelectedShapes("back");
+      } else if (isMod && event.key.toLowerCase() === "]") {
+        event.preventDefault();
+        reorderSelectedShapes("forward");
+      } else if (isMod && event.key.toLowerCase() === "[") {
+        event.preventDefault();
+        reorderSelectedShapes("backward");
+      } else if (isMod && event.key.toLowerCase() === "d" && selectedShapes.some((shape) => !shape.locked)) {
+        event.preventDefault();
+        duplicateSelectedShapes();
+      } else if (isMod && event.key.toLowerCase() === "c" && selectedShapes.some((shape) => !shape.locked)) {
         event.preventDefault();
         copySelectedShapes();
-      } else if (isMod && event.key.toLowerCase() === "x" && selectedShapes.length > 0) {
+      } else if (isMod && event.key.toLowerCase() === "x" && selectedShapes.some((shape) => !shape.locked)) {
         event.preventDefault();
         copySelectedShapes();
-        selectedShapeIds.forEach((id) => shapeMap.delete(id));
+        selectedShapes.filter((shape) => !shape.locked).forEach((shape) => shapeMap.delete(shape.id));
         clearSelection();
       } else if (isMod && event.key.toLowerCase() === "v") {
         event.preventDefault();
         pasteClipboardShapes();
-      } else if ((event.key === "Delete" || event.key === "Backspace") && selectedShapeIds.length > 0) {
+      } else if ((event.key === "Delete" || event.key === "Backspace") && selectedShapes.some((shape) => !shape.locked)) {
         event.preventDefault();
-        selectedShapeIds.forEach((id) => shapeMap.delete(id));
-        clearSelection();
+        deleteSelectedShapes();
       } else if (!isMod && !event.altKey) {
         const shortcutTool = getToolForShortcut(event.key);
         if (shortcutTool && (!readOnly || shortcutTool === "select" || shortcutTool === "pan")) {
@@ -269,7 +327,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clearSelection, copySelectedShapes, pasteClipboardShapes, readOnly, selectedShapeIds, selectedShapes, setSelectedShapeIds, setTool, shapeMap]);
+  }, [clearSelection, copySelectedShapes, deleteSelectedShapes, duplicateSelectedShapes, pasteClipboardShapes, readOnly, reorderSelectedShapes, selectedShapes, setTool, shapeMap]);
 
   const requestRender = useCallback(() => {
     if (animationFrameRef.current !== null) {
@@ -317,6 +375,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
       fill: styleDefaults.fill,
       strokeWidth: styleDefaults.strokeWidth,
       opacity: styleDefaults.opacity,
+      zIndex: Math.max(0, ...sortedShapes.map(getShapeZIndex)) + 1,
       updatedAt: Date.now(),
     };
 
@@ -345,7 +404,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     }
 
     return null;
-  }, [styleDefaults]);
+  }, [sortedShapes, styleDefaults]);
 
   const beginTextEditing = useCallback((shape: EditableTextShape, isNew = false) => {
     textCancelRef.current = false;
@@ -387,7 +446,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     }
 
     const shape = findShapeAtPoint(sortedShapes, point);
-    if (!shape) {
+    if (!shape || shape.locked) {
       return;
     }
 
@@ -429,7 +488,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     }
 
     if (tool === "select") {
-      const resizeHandle = readOnly ? undefined : findResizeHandleAtPoint(selectedShapes, worldPoint, 8 / viewportRef.current.zoom);
+      const resizeHandle = readOnly || selectedShapes.some((shape) => shape.locked) ? undefined : findResizeHandleAtPoint(selectedShapes, worldPoint, 8 / viewportRef.current.zoom);
       const selectionBounds = getCombinedBounds(selectedShapes);
 
       if (resizeHandle && selectionBounds) {
@@ -464,7 +523,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
           setSelectedShapeIds(nextIds);
         }
 
-        const movableShapes = sortedShapes.filter((shape) => nextIds.includes(shape.id));
+        const movableShapes = sortedShapes.filter((shape) => nextIds.includes(shape.id) && !shape.locked);
         setActiveMode("move");
         pointerSessionRef.current = {
           pointerId: event.pointerId,
@@ -630,7 +689,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
 
     const screenPoint = getScreenPoint(event);
     const shape = findShapeAtPoint(sortedShapes, screenToWorld(screenPoint, viewportRef.current));
-    if (shape?.kind === "text" || shape?.kind === "sticky") {
+    if ((shape?.kind === "text" || shape?.kind === "sticky") && !shape.locked) {
       beginTextEditing(shape);
     }
   };
@@ -655,7 +714,36 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     <div className="relative h-full min-h-[640px] overflow-hidden bg-slate-50">
       <CanvasToolbar readOnly={readOnly} />
       <CanvasStyleToolbar hasSelection={selectedShapes.length > 0} readOnly={readOnly} style={activeStyle} onChange={applyStyle} />
-      <LayersPanel shapes={sortedShapes} />
+      <CanvasObjectToolbar
+        hasLockedShape={selectedShapes.some((shape) => shape.locked)}
+        readOnly={readOnly}
+        selectedCount={selectedShapes.length}
+        onDelete={deleteSelectedShapes}
+        onDuplicate={duplicateSelectedShapes}
+        onReorder={reorderSelectedShapes}
+        onToggleHidden={() => {
+          selectedShapes.forEach((shape) => patchShape(shape.id, { hidden: true }));
+          clearSelection();
+        }}
+        onToggleLocked={() => {
+          const shouldLock = !selectedShapes.some((shape) => shape.locked);
+          selectedShapes.forEach((shape) => patchShape(shape.id, { locked: shouldLock }));
+        }}
+      />
+      <LayersPanel
+        readOnly={readOnly}
+        shapes={sortedShapes}
+        onRename={(shapeId, name) => patchShape(shapeId, { name })}
+        onToggleHidden={(shapeId) => {
+          const shape = shapeMap?.get(shapeId);
+          if (shape) patchShape(shapeId, { hidden: !shape.hidden });
+        }}
+        onToggleLocked={(shapeId) => {
+          const shape = shapeMap?.get(shapeId);
+          if (shape) patchShape(shapeId, { locked: !shape.locked });
+        }}
+        onReorder={reorderSelectedShapes}
+      />
       <div className="absolute bottom-4 left-4 z-20 rounded-md border bg-white/95 px-3 py-2 text-xs text-slate-600 shadow-sm">
         {readOnly ? "Read only | " : ""}{Math.round(viewport.zoom * 100)}% | {canvasSize.width.toFixed(0)}x{canvasSize.height.toFixed(0)}
       </div>
@@ -752,8 +840,8 @@ function resizeArrowEndpoint(shape: CanvasShape, handle: ResizeHandle, point: Po
   }
 
   if (handle === "arrow-start") {
-    return { ...shape, x: point.x, y: point.y, updatedAt: Date.now() };
+    return { ...shape, x: point.x, y: point.y, zIndex: getShapeZIndex(shape), updatedAt: Date.now() };
   }
 
-  return { ...shape, end: point, updatedAt: Date.now() };
+  return { ...shape, end: point, zIndex: getShapeZIndex(shape), updatedAt: Date.now() };
 }

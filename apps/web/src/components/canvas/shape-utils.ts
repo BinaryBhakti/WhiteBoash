@@ -16,6 +16,41 @@ export type ResizeHandlePoint = {
 
 const MIN_SHAPE_SIZE = 8;
 
+export type LayerOrderCommand = "forward" | "backward" | "front" | "back";
+
+export function getShapeZIndex(shape: CanvasShape) {
+  return shape.zIndex ?? shape.updatedAt;
+}
+
+export function sortShapesByLayer(shapes: CanvasShape[]) {
+  return shapes.slice().sort((left, right) => getShapeZIndex(left) - getShapeZIndex(right));
+}
+
+export function reorderShapes(shapes: CanvasShape[], selectedShapeIds: string[], command: LayerOrderCommand) {
+  const ordered = sortShapesByLayer(shapes);
+  const selectedIds = new Set(selectedShapeIds);
+
+  if (command === "front") {
+    ordered.sort((left, right) => Number(selectedIds.has(left.id)) - Number(selectedIds.has(right.id)));
+  } else if (command === "back") {
+    ordered.sort((left, right) => Number(selectedIds.has(right.id)) - Number(selectedIds.has(left.id)));
+  } else if (command === "forward") {
+    for (let index = ordered.length - 2; index >= 0; index -= 1) {
+      if (selectedIds.has(ordered[index].id) && !selectedIds.has(ordered[index + 1].id)) {
+        [ordered[index], ordered[index + 1]] = [ordered[index + 1], ordered[index]];
+      }
+    }
+  } else {
+    for (let index = 1; index < ordered.length; index += 1) {
+      if (selectedIds.has(ordered[index].id) && !selectedIds.has(ordered[index - 1].id)) {
+        [ordered[index], ordered[index - 1]] = [ordered[index - 1], ordered[index]];
+      }
+    }
+  }
+
+  return ordered.map((shape, index) => ({ ...shape, zIndex: index + 1 }));
+}
+
 export function getShapeBounds(shape: CanvasShape): ShapeBounds {
   if (shape.kind === "rectangle") {
     return normalizeBounds({ x: shape.x, y: shape.y, width: shape.width, height: shape.height });
@@ -74,6 +109,10 @@ export function boundsFromPoints(start: Point, end: Point): ShapeBounds {
 }
 
 export function hitTestShape(shape: CanvasShape, point: Point, tolerance = 6) {
+  if (shape.hidden) {
+    return false;
+  }
+
   if (shape.kind === "circle") {
     return Math.hypot(point.x - shape.x, point.y - shape.y) <= shape.radius + tolerance;
   }
@@ -100,7 +139,7 @@ export function findShapeAtPoint(shapes: CanvasShape[], point: Point) {
 }
 
 export function findShapesInBounds(shapes: CanvasShape[], bounds: ShapeBounds) {
-  return shapes.filter((shape) => boundsIntersect(getShapeBounds(shape), bounds));
+  return shapes.filter((shape) => !shape.hidden && boundsIntersect(getShapeBounds(shape), bounds));
 }
 
 export function moveShape(shape: CanvasShape, delta: Point): CanvasShape {
@@ -108,6 +147,7 @@ export function moveShape(shape: CanvasShape, delta: Point): CanvasShape {
     ...shape,
     x: shape.x + delta.x,
     y: shape.y + delta.y,
+    zIndex: getShapeZIndex(shape),
     updatedAt: Date.now(),
   };
 
@@ -143,13 +183,14 @@ export function resizeShape(
   handle?: ResizeHandle,
 ): CanvasShape {
   if (shape.kind === "arrow" && handle === "arrow-start") {
-    return { ...shape, x: nextSelectionBounds.x, y: nextSelectionBounds.y, updatedAt: Date.now() };
+    return { ...shape, x: nextSelectionBounds.x, y: nextSelectionBounds.y, zIndex: getShapeZIndex(shape), updatedAt: Date.now() };
   }
 
   if (shape.kind === "arrow" && handle === "arrow-end") {
     return {
       ...shape,
       end: { x: nextSelectionBounds.x + nextSelectionBounds.width, y: nextSelectionBounds.y + nextSelectionBounds.height },
+      zIndex: getShapeZIndex(shape),
       updatedAt: Date.now(),
     };
   }
@@ -163,23 +204,23 @@ export function resizeShape(
 
   if (shape.kind === "rectangle") {
     const origin = transform({ x: shape.x, y: shape.y });
-    return { ...shape, ...origin, width: shape.width * scaleX, height: shape.height * scaleY, updatedAt: Date.now() };
+    return { ...shape, ...origin, width: shape.width * scaleX, height: shape.height * scaleY, zIndex: getShapeZIndex(shape), updatedAt: Date.now() };
   }
 
   if (shape.kind === "circle") {
     const center = transform({ x: shape.x, y: shape.y });
-    return { ...shape, ...center, radius: Math.max(1, shape.radius * Math.max(scaleX, scaleY)), updatedAt: Date.now() };
+    return { ...shape, ...center, radius: Math.max(1, shape.radius * Math.max(scaleX, scaleY)), zIndex: getShapeZIndex(shape), updatedAt: Date.now() };
   }
 
   if (shape.kind === "arrow") {
     const start = transform({ x: shape.x, y: shape.y });
-    return { ...shape, ...start, end: transform(shape.end), updatedAt: Date.now() };
+    return { ...shape, ...start, end: transform(shape.end), zIndex: getShapeZIndex(shape), updatedAt: Date.now() };
   }
 
   if (shape.kind === "freehand") {
     const points = shape.points.map(transform);
     const origin = transform({ x: shape.x, y: shape.y });
-    return { ...shape, ...origin, points, updatedAt: Date.now() };
+    return { ...shape, ...origin, points, zIndex: getShapeZIndex(shape), updatedAt: Date.now() };
   }
 
   if (shape.kind === "sticky") {
@@ -189,12 +230,13 @@ export function resizeShape(
       ...origin,
       width: Math.max(MIN_SHAPE_SIZE, shape.width * scaleX),
       height: Math.max(MIN_SHAPE_SIZE, shape.height * scaleY),
+      zIndex: getShapeZIndex(shape),
       updatedAt: Date.now(),
     };
   }
 
   const origin = transform({ x: shape.x, y: shape.y });
-  return { ...shape, ...origin, width: Math.max(MIN_SHAPE_SIZE, shape.width * scaleX), updatedAt: Date.now() };
+  return { ...shape, ...origin, width: Math.max(MIN_SHAPE_SIZE, shape.width * scaleX), zIndex: getShapeZIndex(shape), updatedAt: Date.now() };
 }
 
 export function getResizeHandles(shapes: CanvasShape[]): ResizeHandlePoint[] {
@@ -293,7 +335,7 @@ export function isMeaningfulShape(shape: CanvasShape) {
 }
 
 export function duplicateShape(shape: CanvasShape): CanvasShape {
-  return moveShape({ ...shape, id: crypto.randomUUID() }, { x: 24, y: 24 });
+  return moveShape({ ...shape, id: crypto.randomUUID(), zIndex: Date.now() }, { x: 24, y: 24 });
 }
 
 export function simplifyFreehandShape(shape: CanvasShape, tolerance = 1.5): CanvasShape {

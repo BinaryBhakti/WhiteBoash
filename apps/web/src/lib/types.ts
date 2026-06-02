@@ -51,6 +51,10 @@ type BaseShape = {
   fill?: string;
   strokeWidth: number;
   opacity?: number;
+  name?: string;
+  hidden?: boolean;
+  locked?: boolean;
+  zIndex?: number;
   createdBy?: string;
   updatedAt: number;
 };
