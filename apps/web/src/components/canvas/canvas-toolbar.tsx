@@ -1,6 +1,6 @@
 "use client";
 
-import { Circle, MousePointer2, Move, PenLine, Square, Type, ArrowUpRight, Layers } from "lucide-react";
+import { ArrowUpRight, Circle, Eraser, Layers, MousePointer2, Move, PenLine, Square, StickyNote, Type } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CanvasTool } from "@/lib/types";
 import { useCanvasStore } from "@/hooks/use-canvas-store";
@@ -13,6 +13,8 @@ const tools: Array<{ id: CanvasTool; label: string; icon: React.ComponentType<{ 
   { id: "arrow", label: "Arrow", icon: ArrowUpRight },
   { id: "freehand", label: "Freehand", icon: PenLine },
   { id: "text", label: "Text", icon: Type },
+  { id: "sticky", label: "Sticky note", icon: StickyNote },
+  { id: "eraser", label: "Eraser", icon: Eraser },
 ];
 
 export function CanvasToolbar({ readOnly = false }: { readOnly?: boolean }) {

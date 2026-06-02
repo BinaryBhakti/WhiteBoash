@@ -77,6 +77,7 @@ export function drawShape(context: CanvasRenderingContext2D, shape: CanvasShape)
   context.strokeStyle = shape.stroke;
   context.fillStyle = shape.fill ?? "transparent";
   context.lineWidth = shape.strokeWidth;
+  context.globalAlpha = shape.opacity ?? 1;
 
   if (shape.kind === "rectangle") {
     context.beginPath();
@@ -112,6 +113,17 @@ export function drawShape(context: CanvasRenderingContext2D, shape: CanvasShape)
     context.font = "16px Inter, ui-sans-serif, system-ui";
     context.fillStyle = shape.fill ?? "#0f172a";
     wrapText(context, shape.text, shape.x, shape.y, shape.width, 22);
+  }
+
+  if (shape.kind === "sticky") {
+    context.beginPath();
+    context.roundRect(shape.x, shape.y, shape.width, shape.height, 6);
+    context.fillStyle = shape.fill ?? "#fef08a";
+    context.fill();
+    context.stroke();
+    context.font = "16px Inter, ui-sans-serif, system-ui";
+    context.fillStyle = shape.stroke;
+    wrapText(context, shape.text, shape.x + 12, shape.y + 28, Math.max(24, shape.width - 24), 22);
   }
 
   context.restore();

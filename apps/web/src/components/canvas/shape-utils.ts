@@ -38,6 +38,10 @@ export function getShapeBounds(shape: CanvasShape): ShapeBounds {
     return getPointsBounds(shape.points);
   }
 
+  if (shape.kind === "sticky") {
+    return normalizeBounds({ x: shape.x, y: shape.y, width: shape.width, height: shape.height });
+  }
+
   return {
     x: shape.x,
     y: shape.y - 18,
@@ -176,6 +180,17 @@ export function resizeShape(
     const points = shape.points.map(transform);
     const origin = transform({ x: shape.x, y: shape.y });
     return { ...shape, ...origin, points, updatedAt: Date.now() };
+  }
+
+  if (shape.kind === "sticky") {
+    const origin = transform({ x: shape.x, y: shape.y });
+    return {
+      ...shape,
+      ...origin,
+      width: Math.max(MIN_SHAPE_SIZE, shape.width * scaleX),
+      height: Math.max(MIN_SHAPE_SIZE, shape.height * scaleY),
+      updatedAt: Date.now(),
+    };
   }
 
   const origin = transform({ x: shape.x, y: shape.y });

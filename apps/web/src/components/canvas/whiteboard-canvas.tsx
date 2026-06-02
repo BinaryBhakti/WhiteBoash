@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
-import type { AwarenessCursor, CanvasShape, CanvasTool, Point, TextShape, Viewport } from "@/lib/types";
+import type { AwarenessCursor, CanvasShape, CanvasStyle, CanvasTool, Point, StickyShape, TextShape, Viewport } from "@/lib/types";
 import { useCanvasStore } from "@/hooks/use-canvas-store";
 import { useCRDTMap } from "@/hooks/use-crdt-map";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
+import { CanvasStyleToolbar } from "@/components/canvas/canvas-style-toolbar";
 import { drawCanvasScene, screenToWorld } from "@/components/canvas/canvas-renderer";
 import { LayersPanel } from "@/components/canvas/layers-panel";
 import {
@@ -33,7 +34,7 @@ type WhiteboardCanvasProps = {
 
 type PointerSession = {
   pointerId: number;
-  mode: "pan" | "move" | "marquee" | "resize" | "draw";
+  mode: "pan" | "move" | "marquee" | "resize" | "draw" | "erase";
   startedAt: Point;
   lastScreen: Point;
   originalShapes?: CanvasShape[];
@@ -42,8 +43,10 @@ type PointerSession = {
   appendSelection?: boolean;
 };
 
+type EditableTextShape = TextShape | StickyShape;
+
 type TextEditorState = {
-  shape: TextShape;
+  shape: EditableTextShape;
   isNew: boolean;
 };
 
@@ -65,6 +68,8 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
   const viewport = useCanvasStore((state) => state.viewport);
   const setViewport = useCanvasStore((state) => state.setViewport);
   const setTool = useCanvasStore((state) => state.setTool);
+  const styleDefaults = useCanvasStore((state) => state.styleDefaults);
+  const patchStyleDefaults = useCanvasStore((state) => state.patchStyleDefaults);
   const selectedShapeIds = useCanvasStore((state) => state.selectedShapeIds);
   const setSelectedShapeIds = useCanvasStore((state) => state.setSelectedShapeIds);
   const toggleSelectedShapeId = useCanvasStore((state) => state.toggleSelectedShapeId);
@@ -103,6 +108,17 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     () => sortedShapes.filter((shape) => selectedShapeIds.includes(shape.id)),
     [selectedShapeIds, sortedShapes],
   );
+  const activeStyle = useMemo<CanvasStyle>(() => {
+    const selected = selectedShapes[0];
+    return selected
+      ? {
+          stroke: selected.stroke,
+          fill: selected.fill ?? styleDefaults.fill,
+          strokeWidth: selected.strokeWidth,
+          opacity: selected.opacity ?? 1,
+        }
+      : styleDefaults;
+  }, [selectedShapes, styleDefaults]);
 
   const render = useCallback(() => {
     const canvas = canvasRef.current;
@@ -177,6 +193,23 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
 
     setTextEditor(null);
   }, [setSelectedShapeIds, shapeMap, textEditor]);
+
+  const applyStyle = useCallback((patch: Partial<CanvasStyle>) => {
+    patchStyleDefaults(patch);
+    if (!shapeMap || selectedShapes.length === 0) {
+      return;
+    }
+
+    doc.transact(() => {
+      selectedShapes.forEach((shape) => {
+        shapeMap.set(shape.id, {
+          ...shape,
+          ...patch,
+          updatedAt: Date.now(),
+        });
+      });
+    });
+  }, [doc, patchStyleDefaults, selectedShapes, shapeMap]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -280,9 +313,10 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
       id: crypto.randomUUID(),
       x: start.x,
       y: start.y,
-      stroke: "#0f172a",
-      fill: "rgba(20, 184, 166, 0.12)",
-      strokeWidth: 2,
+      stroke: styleDefaults.stroke,
+      fill: styleDefaults.fill,
+      strokeWidth: styleDefaults.strokeWidth,
+      opacity: styleDefaults.opacity,
       updatedAt: Date.now(),
     };
 
@@ -303,13 +337,17 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     }
 
     if (shapeTool === "text") {
-      return { ...base, kind: "text", fill: "#0f172a", text: "", width: 180 };
+      return { ...base, kind: "text", fill: styleDefaults.stroke, text: "", width: 180 };
+    }
+
+    if (shapeTool === "sticky") {
+      return { ...base, kind: "sticky", text: "", width: 180, height: 140 };
     }
 
     return null;
-  }, []);
+  }, [styleDefaults]);
 
-  const beginTextEditing = useCallback((shape: TextShape, isNew = false) => {
+  const beginTextEditing = useCallback((shape: EditableTextShape, isNew = false) => {
     textCancelRef.current = false;
     setSelectedShapeIds([shape.id]);
     setTextEditor({ shape, isNew });
@@ -343,11 +381,40 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     };
   };
 
+  const eraseAtPoint = useCallback((point: Point) => {
+    if (!shapeMap) {
+      return;
+    }
+
+    const shape = findShapeAtPoint(sortedShapes, point);
+    if (!shape) {
+      return;
+    }
+
+    shapeMap.delete(shape.id);
+    if (selectedShapeIds.includes(shape.id)) {
+      setSelectedShapeIds(selectedShapeIds.filter((id) => id !== shape.id));
+    }
+  }, [selectedShapeIds, setSelectedShapeIds, shapeMap, sortedShapes]);
+
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const screenPoint = getScreenPoint(event);
     const worldPoint = screenToWorld(screenPoint, viewportRef.current);
     lastPointerWorldRef.current = worldPoint;
     setHoveredHandle(null);
+
+    if (tool === "eraser" && !readOnly) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      eraseAtPoint(worldPoint);
+      setActiveMode("erase");
+      pointerSessionRef.current = {
+        pointerId: event.pointerId,
+        mode: "erase",
+        startedAt: worldPoint,
+        lastScreen: screenPoint,
+      };
+      return;
+    }
 
     if (tool === "pan" || event.button === 1) {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -432,7 +499,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
     }
 
     const draft = createDraftShape(tool, worldPoint);
-    if (draft?.kind === "text") {
+    if (draft?.kind === "text" || draft?.kind === "sticky") {
       beginTextEditing(draft, true);
       return;
     }
@@ -476,6 +543,11 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
       viewportRef.current = nextViewport;
       setViewport(nextViewport);
       requestRender();
+      return;
+    }
+
+    if (session.mode === "erase" && !readOnly) {
+      eraseAtPoint(worldPoint);
       return;
     }
 
@@ -558,7 +630,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
 
     const screenPoint = getScreenPoint(event);
     const shape = findShapeAtPoint(sortedShapes, screenToWorld(screenPoint, viewportRef.current));
-    if (shape?.kind === "text") {
+    if (shape?.kind === "text" || shape?.kind === "sticky") {
       beginTextEditing(shape);
     }
   };
@@ -582,6 +654,7 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
   return (
     <div className="relative h-full min-h-[640px] overflow-hidden bg-slate-50">
       <CanvasToolbar readOnly={readOnly} />
+      <CanvasStyleToolbar hasSelection={selectedShapes.length > 0} readOnly={readOnly} style={activeStyle} onChange={applyStyle} />
       <LayersPanel shapes={sortedShapes} />
       <div className="absolute bottom-4 left-4 z-20 rounded-md border bg-white/95 px-3 py-2 text-xs text-slate-600 shadow-sm">
         {readOnly ? "Read only | " : ""}{Math.round(viewport.zoom * 100)}% | {canvasSize.width.toFixed(0)}x{canvasSize.height.toFixed(0)}
@@ -593,9 +666,9 @@ export function WhiteboardCanvas({ documentId, doc, readOnly = false, onCursorCh
           className="absolute z-30 resize-none rounded-sm border border-emerald-600 bg-white/95 px-1 py-0.5 text-slate-900 shadow-sm outline-none ring-2 ring-emerald-200"
           style={{
             left: viewport.x + textEditor.shape.x * viewport.zoom,
-            top: viewport.y + (textEditor.shape.y - 20) * viewport.zoom,
+            top: viewport.y + (textEditor.shape.kind === "sticky" ? textEditor.shape.y + 8 : textEditor.shape.y - 20) * viewport.zoom,
             width: Math.max(120, textEditor.shape.width * viewport.zoom),
-            minHeight: Math.max(56, 72 * viewport.zoom),
+            minHeight: Math.max(56, (textEditor.shape.kind === "sticky" ? textEditor.shape.height - 16 : 72) * viewport.zoom),
             fontSize: Math.max(12, 16 * viewport.zoom),
             lineHeight: `${Math.max(18, 22 * viewport.zoom)}px`,
           }}
@@ -652,6 +725,8 @@ function getToolForShortcut(key: string): CanvasTool | null {
     a: "arrow",
     p: "freehand",
     t: "text",
+    s: "sticky",
+    e: "eraser",
   };
 
   return shortcuts[key.toLowerCase()] ?? null;
@@ -666,6 +741,7 @@ function getCanvasCursor(tool: CanvasTool, activeMode: PointerSession["mode"] | 
   if (hoveredHandle === "arrow-start" || hoveredHandle === "arrow-end") return "cursor-move";
   if (tool === "pan") return "cursor-grab";
   if (tool === "select") return "cursor-default";
+  if (tool === "eraser") return "cursor-cell";
   if (tool === "text") return "cursor-text";
   return "cursor-crosshair";
 }

@@ -162,4 +162,27 @@ describe("shape utils", () => {
       { x: 50, y: 30 },
     ]);
   });
+
+  it("calculates, hit tests, and resizes sticky notes", () => {
+    const sticky: CanvasShape = {
+      id: "sticky-1",
+      kind: "sticky",
+      x: 40,
+      y: 60,
+      width: 180,
+      height: 140,
+      text: "Planning note",
+      stroke: "#0f172a",
+      fill: "#fef08a",
+      strokeWidth: 2,
+      updatedAt: 1,
+    };
+
+    expect(getShapeBounds(sticky)).toEqual({ x: 40, y: 60, width: 180, height: 140 });
+    expect(hitTestShape(sticky, { x: 100, y: 100 })).toBe(true);
+    expect(resizeShape(sticky, getShapeBounds(sticky), { x: 40, y: 60, width: 360, height: 280 })).toMatchObject({
+      width: 360,
+      height: 280,
+    });
+  });
 });

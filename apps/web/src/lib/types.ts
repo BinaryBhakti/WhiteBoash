@@ -44,12 +44,13 @@ export type Viewport = {
 
 type BaseShape = {
   id: string;
-  kind: "rectangle" | "circle" | "arrow" | "freehand" | "text";
+  kind: "rectangle" | "circle" | "arrow" | "freehand" | "text" | "sticky";
   x: number;
   y: number;
   stroke: string;
   fill?: string;
   strokeWidth: number;
+  opacity?: number;
   createdBy?: string;
   updatedAt: number;
 };
@@ -81,14 +82,29 @@ export type TextShape = BaseShape & {
   width: number;
 };
 
+export type StickyShape = BaseShape & {
+  kind: "sticky";
+  text: string;
+  width: number;
+  height: number;
+};
+
 export type CanvasShape =
   | RectangleShape
   | CircleShape
   | ArrowShape
   | FreehandShape
-  | TextShape;
+  | TextShape
+  | StickyShape;
 
-export type CanvasTool = "select" | "pan" | "rectangle" | "circle" | "arrow" | "freehand" | "text";
+export type CanvasTool = "select" | "pan" | "rectangle" | "circle" | "arrow" | "freehand" | "text" | "sticky" | "eraser";
+
+export type CanvasStyle = {
+  stroke: string;
+  fill: string;
+  strokeWidth: number;
+  opacity: number;
+};
 
 export type EditorBlock = {
   id: string;
